@@ -1,0 +1,21 @@
+services:
+  retail-analytics-postgres:
+    image: postgres:16
+    container_name: retail-analytics-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TARGET_POSTGRES_DB}
+      POSTGRES_USER: ${TARGET_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TARGET_POSTGRES_PASSWORD}
+    ports:
+      - "${TARGET_POSTGRES_PORT}:5432"
+    volumes:
+      - retail_analytics_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TARGET_POSTGRES_USER} -d ${TARGET_POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  retail_analytics_data:
