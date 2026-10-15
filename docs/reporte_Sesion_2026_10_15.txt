@@ -1,0 +1,383 @@
+================================================================================
+REPORTE DE SESIÓN — 15 DE OCTUBRE DE 2026
+Retail Data Platform — Pipeline de Ingesta RAW
+================================================================================
+
+--------------------------------------------------------------------------------
+RESUMEN EJECUTIVO
+--------------------------------------------------------------------------------
+
+Se construyó el primer pipeline funcional del repo retail-data-platform.
+El pipeline extrae datos del simulador retail-operations-simulator y los carga
+en la capa RAW del data platform con idempotencia verificada.
+
+Estado: FUNCIONAL END-TO-END.
+
+
+--------------------------------------------------------------------------------
+OBJETIVOS DE LA SESIÓN
+--------------------------------------------------------------------------------
+
+1. Crear estructura del repo retail-data-platform.
+2. Configurar PostgreSQL analítico en puerto 5435.
+3. Crear 6 schemas: raw, staging, analytical, kpis, dq, meta.
+4. Modelar 11 tablas RAW.
+5. Implementar sistema de watermarks.
+6. Implementar loader idempotente (UPSERT).
+7. Implementar 3 extractores (customers, orders, order_items).
+8. Implementar pipeline runner + CLI.
+9. Correr primera ingesta end-to-end.
+10. Verificar idempotencia.
+11. Publicar en GitHub.
+
+
+--------------------------------------------------------------------------------
+LOGROS
+--------------------------------------------------------------------------------
+
+1. INFRAESTRUCTURA
+
+   - PostgreSQL 16 en Docker (retail-analytics-postgres, puerto 5435).
+   - Conexión al origen (retail-operations-postgres, puerto 5434).
+   - Dos engines SQLAlchemy separados (source + target).
+   - Configuración vía .env con pydantic-settings.
+
+2. SCHEMAS Y MIGRACIONES
+
+   4 migraciones Alembic aplicadas:
+     001 create schemas          (3d3d7d8a42b5)
+     002 create raw orders       (7eb1b5be4e23)
+     003 create raw core tables  (aab900c3942f)
+     004 create meta tables      (66baa12b65f1)
+
+   6 schemas creados:
+     raw · staging · analytical · kpis · dq · meta
+
+3. MODELOS RAW (11 tablas)
+
+   - raw.customers
+   - raw.orders
+   - raw.order_items
+   - raw.products
+   - raw.product_variants
+   - raw.states
+   - raw.locations
+   - raw.shipments
+   - raw.carriers
+   - raw.categories
+   - raw.inventory_movements
+
+   Todas con RawMixin:
+     _raw_id (BIGSERIAL PK)
+     _source_id (UUID UNIQUE)
+     _ingested_at
+     _ingestion_run_id
+     _source_table
+
+4. META TABLES
+
+   - meta.watermarks       (control de ingesta por entidad)
+   - meta.pipeline_runs    (log de corridas del pipeline)
+
+5. INGESTION
+
+   - WatermarkStore: leer/escribir watermarks.
+   - RawLoader: UPSERT idempotente por _source_id.
+   - Extractores:
+       customers    → full load
+       orders       → incremental por order_date
+       order_items  → incremental por orden padre
+
+6. PIPELINE RUNNER
+
+   - Orquestación de las fases.
+   - run_id único por corrida (ING-YYYYMMDD-HHMMSS-8hex).
+   - Manejo de errores con rollback y status FAILED.
+   - CLI: python -m app.pipeline --entities all
+
+
+--------------------------------------------------------------------------------
+DATOS INGESTADOS
+--------------------------------------------------------------------------------
+
+customers      10,000 filas
+orders            188 filas
+order_items       435 filas
+─────────────────────────────
+TOTAL          10,623 filas
+
+Watermarks:
+
+  entity_name   last_watermark_date  last_watermark_id   rows  status
+  ─────────────────────────────────────────────────────────────────────
+  customers     (n/a, full load)     (n/a)               10000  SUCCESS
+  orders        2026-01-01           ORD-2026-000188       188  SUCCESS
+  order_items   2026-01-01           ORD-2026-000188       435  SUCCESS
+
+Pipeline runs:
+
+  run_id                        status   entities            rows
+  ──────────────────────────────────────────────────────────────────
+  ING-20261015-201321-a6c1b9e3  SUCCESS  customers           10000
+  ING-20261015-201437-444ba0aa  FAILED   orders,order_items      0
+  ING-20261015-201927-bd7cf0f2  SUCCESS  orders,order_items    623
+  ING-20261015-202320-d9f974b5  SUCCESS  orders,order_items      0
+
+
+--------------------------------------------------------------------------------
+INCIDENTES Y RESOLUCIONES
+--------------------------------------------------------------------------------
+
+1. AmbiguousParameter en extractor de orders
+
+   Síntoma:
+     psycopg.errors.AmbiguousParameter: could not determine data type
+     of parameter $2
+
+   Causa:
+     Cuando watermark_id = None, PostgreSQL no puede inferir el tipo
+     del parámetro en la condición:
+       (order_date = :wdate AND order_number > :wid)
+
+   Solución:
+     Usar string vacío en lugar de None:
+       wid = watermark_id if watermark_id is not None else ""
+     Como cualquier string es > "", la condición funciona igual.
+
+2. AttributeError en el bloque except del runner
+
+   Síntoma:
+     'int' object has no attribute 'status'
+
+   Causa:
+     PipelineRun.__table__.select() no devuelve una entidad ORM
+     mapeada. db.scalar() devolvió un entero.
+
+   Solución:
+     Usar select(PipelineRun).where(...) que sí devuelve ORM.
+
+3. Typo en el nombre del archivo __main__.py
+
+   Síntoma:
+     No module named app.pipeline.__main__
+
+   Causa:
+     El archivo se creó como __main__,py (con coma en lugar de punto).
+
+   Solución:
+     git mv + ren para renombrar el archivo.
+
+4. Watermarks/runs colgados en RUNNING
+
+   Síntoma:
+     Después de los bugs, quedaron registros en estado RUNNING.
+
+   Solución:
+     UPDATE manual a FAILED con mensaje descriptivo.
+
+
+--------------------------------------------------------------------------------
+IDEMPOTENCIA VERIFICADA
+--------------------------------------------------------------------------------
+
+Corrida 1:
+  → orders       extraídas 188 filas, 188 procesadas
+  → order_items  extraídas 435 filas, 435 procesadas
+
+Corrida 2 (mismo estado del origen):
+  → orders       extraídas 0 filas, 0 procesadas
+  → order_items  extraídas 0 filas, 0 procesadas
+
+Conteos finales en RAW:
+  raw.orders       188  (sin duplicados)
+  raw.order_items  435  (sin duplicados)
+
+Conclusión: la ingesta incremental con watermarks + UPSERT garantiza
+idempotencia completa.
+
+
+--------------------------------------------------------------------------------
+DECISIONES TÉCNICAS TOMADAS
+--------------------------------------------------------------------------------
+
+1. RAW como copia fiel, sin transformaciones.
+2. Enums de origen guardados como String en RAW (tolerancia).
+3. UUID como UUID(as_uuid=False) (string) en RAW.
+4. Metadata de ingesta en 5 columnas (_raw_id, _source_id,
+   _ingested_at, _ingestion_run_id, _source_table).
+5. UPSERT por _source_id para idempotencia.
+6. Watermarks con (last_date, last_id) para orden determinista.
+7. Full load para customers (10,000 filas, no vale incremental).
+8. Incremental para orders y order_items por order_date.
+9. Dos engines SQLAlchemy: source (solo lectura) + target (RW).
+10. SQL puro (text) en extractores por flexibilidad y velocidad.
+11. run_id único por corrida del pipeline.
+12. Transacción por entidad, con rollback en caso de error.
+13. Modelos del origen definidos localmente (desacoplamiento).
+
+
+--------------------------------------------------------------------------------
+ARCHIVOS CREADOS
+--------------------------------------------------------------------------------
+
+alembic/versions/
+  3d3d7d8a42b5_001_create_schemas.py
+  7eb1b5be4e23_002_create_raw_orders.py
+  aab900c3942f_003_create_raw_core_tables.py
+  66baa12b65f1_004_create_meta_tables.py
+
+app/core/
+  config.py
+
+app/db/
+  base.py
+  session.py
+
+app/meta/
+  __init__.py
+  watermark.py
+  pipeline_runs.py
+
+app/raw/
+  __init__.py
+  mixins.py
+  orders.py
+  order_items.py
+  customers.py
+  products.py
+  product_variants.py
+  states.py
+  locations.py
+  shipments.py
+  carriers.py
+  categories.py
+  inventory_movements.py
+
+app/ingestion/
+  __init__.py
+  watermark_store.py
+  loader.py
+  source_models.py
+  extractors/
+    __init__.py
+    customers.py
+    orders.py
+    order_items.py
+
+app/pipeline/
+  __init__.py
+  runner.py
+  __main__.py
+
+Raíz:
+  .env.example
+  .gitignore
+  Dockerfile
+  docker-compose.yml
+  pyproject.toml
+  README.md
+  ARCHITECTURE.md
+
+
+--------------------------------------------------------------------------------
+ESTADO FINAL DEL REPO
+--------------------------------------------------------------------------------
+
+retail-data-platform
+├── 55+ archivos
+├── 2 commits limpios
+├── Publicado en GitHub
+├── Infraestructura funcional
+├── Pipeline end-to-end verificado
+└── 10,623 filas ingestadas
+
+
+--------------------------------------------------------------------------------
+LO QUE FALTA
+--------------------------------------------------------------------------------
+
+BLOQUE 5 — STAGING
+  Limpieza, tipado, deduplicación, derivaciones básicas.
+
+BLOQUE 6 — ANALYTICAL
+  Modelo estrella: dims (6) + facts (4).
+
+BLOQUE 7 — KPIs
+  Métricas precalculadas: ventas, inventario, logística, procurement.
+
+BLOQUE 8 — API INTERMEDIA
+  FastAPI para servir KPIs al dashboard.
+
+BLOQUE 9 — DASHBOARD REACT
+  Aplicación React con Vite + Tailwind + TanStack Query.
+
+OTROS
+  - Implementar 8 extractores restantes.
+  - Capa VALIDATION con Data Quality.
+  - Airflow para orquestación (V2).
+  - dbt para transformaciones (V3).
+  - Cloud (V4).
+
+
+--------------------------------------------------------------------------------
+MÉTRICAS DE LA SESIÓN
+--------------------------------------------------------------------------------
+
+Tiempo total:                ~1 hora
+Migraciones aplicadas:       4
+Tablas creadas:              13 (11 RAW + 2 meta)
+Extractores implementados:   3
+Datos ingestados:            10,623 filas
+Bugs resueltos:              4
+Idempotencia:                Verificada
+Commits:                     2
+Push a GitHub:               Exitoso
+
+
+--------------------------------------------------------------------------------
+PRÓXIMA SESIÓN
+--------------------------------------------------------------------------------
+
+Continuar con BLOQUE 5 — STAGING.
+
+Objetivos:
+
+1. Crear modelos STAGING (staging.orders, staging.order_items,
+   staging.customers).
+2. Implementar transformaciones de limpieza:
+   - Tipado correcto (fechas, decimales, enums).
+   - Normalización (trim, mayúsculas).
+   - Deduplicación.
+   - Derivaciones básicas.
+3. Crear migraciones Alembic para los modelos STAGING.
+4. Implementar runners de transformación RAW → STAGING.
+5. Verificar end-to-end.
+
+Pre-requisitos:
+
+- Docker Desktop corriendo.
+- Contenedores retail-analytics-postgres y retail-operations-postgres
+  en healthy.
+- venv activado.
+- 10,623 filas en RAW.
+
+
+--------------------------------------------------------------------------------
+CONCLUSIÓN
+--------------------------------------------------------------------------------
+
+La sesión cumplió todos los objetivos. El pipeline de ingesta funciona
+end-to-end con idempotencia verificada. La base del data platform está
+sólida para construir las capas siguientes.
+
+El proyecto avanza según el método Google de data engineering:
+  ✓ Ingest everything raw
+  ⏳ Store in a canonical form
+  ⏳ Validate early
+  ⏳ Model for analysis
+  ⏳ Serve fast
+
+
+================================================================================
+FIN DEL REPORTE
+================================================================================
