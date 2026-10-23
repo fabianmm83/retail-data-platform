@@ -1,12 +1,13 @@
 # Cuidado con Rikochet — Retail Data Platform
 
 [![Python](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](https://www.postgresql.org/)
-[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.1-red.svg)](https://www.sqlalchemy.org/)
-[![Alembic](https://img.shields.io/badge/Alembic-1.20-orange.svg)](https://alembic.sqlalchemy.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Pipeline de **Data Engineering** que consume los datos operacionales del simulador [retail-operations-simulator](https://github.com/fabianmm83/retail-operations-simulator) y los transforma en un modelo analítico listo para KPIs y dashboard.
+Pipeline de **Data Engineering** que consume los datos operacionales del simulador [retail-operations-simulator](https://github.com/fabianmm83/retail-operations-simulator) y los transforma en un modelo analítico con KPIs y dashboard visual.
 
 Este repositorio implementa la segunda mitad del ecosistema **Cuidado con Rikochet**:
 
@@ -14,6 +15,8 @@ Este repositorio implementa la segunda mitad del ecosistema **Cuidado con Rikoch
 retail-operations-simulator     →  produce datos operacionales
               ↓
 retail-data-platform            →  los ingesta, valida, transforma y analiza
+              ↓
+React Dashboard                 →  visualización de KPIs
 Tabla de contenido
 ¿Qué es esto?
 
@@ -27,6 +30,10 @@ Modelo de datos
 
 Ingesta incremental
 
+API de KPIs
+
+Dashboard React
+
 Instalación y uso
 
 Estructura del proyecto
@@ -36,21 +43,17 @@ Próximos pasos
 Licencia
 
 ¿Qué es esto?
-retail-data-platform es el pipeline de datos del ecosistema Cuidado con Rikochet. Su responsabilidad es:
+retail-data-platform es el pipeline de datos del ecosistema Cuidado con Rikochet. Transforma los datos del simulador en analítica accionable a través de 5 capas:
 
-Extraer los datos del simulador (retail-operations-simulator).
+RAW — copia fiel de la fuente.
 
-Cargar los datos crudos a una capa RAW (copia fiel, sin transformar).
+STAGING — datos limpios y tipados.
 
-Validar que los datos cumplan reglas de calidad.
+ANALYTICAL — modelo estrella (dims + facts).
 
-Limpiar y tipar los datos en STAGING.
+KPIS — métricas precalculadas.
 
-Modelar los datos en un esquema estrella (ANALYTICAL).
-
-Calcular KPIs precalculados.
-
-Servir los KPIs vía API para el dashboard React.
+Dashboard — visualización interactiva.
 
 La filosofía sigue el método Google de data engineering:
 
@@ -70,220 +73,182 @@ text
                        │  INGESTION (incremental por watermark)
                        ▼
 ┌────────────────────────────────────────────────────────────┐
-│  INGESTION                                                  │
-│  - WatermarkStore (control de ingesta por entidad)         │
-│  - Extractores (customers, orders, order_items, ...)       │
-└──────────────────────┬─────────────────────────────────────┘
-                       │
-                       ▼
-┌────────────────────────────────────────────────────────────┐
 │  RAW (copia fiel de la fuente)                             │
-│  - Sin transformar                                          │
-│  - Metadata de ingesta (_ingested_at, _ingestion_run_id)   │
-│  - Idempotencia por _source_id                              │
+│  8 tablas · 11,339 filas                                    │
 └──────────────────────┬─────────────────────────────────────┘
                        │
+                       │  TRANSFORMATION (SQL, idempotente)
                        ▼
 ┌────────────────────────────────────────────────────────────┐
-│  VALIDATION (reglas de Data Quality)                       │
-│  - PASS / WARN / FAIL                                       │
-│  - Rechazos a dq.rejected_records                           │
+│  STAGING (limpio, tipado, con CHECK constraints)           │
+│  8 tablas · 11,339 filas                                    │
 └──────────────────────┬─────────────────────────────────────┘
                        │
-                       ▼
-┌────────────────────────────────────────────────────────────┐
-│  STAGING (limpio, tipado, deduplicado)                     │
-│  - Tipos correctos                                          │
-│  - Sin duplicados                                           │
-│  - Derivaciones básicas                                     │
-└──────────────────────┬─────────────────────────────────────┘
-                       │
+                       │  TRANSFORMATION (star schema)
                        ▼
 ┌────────────────────────────────────────────────────────────┐
 │  ANALYTICAL (modelo estrella)                              │
-│  - Dimensiones: dim_date, dim_customer, dim_product, ...   │
-│  - Hechos: fact_sales, fact_inventory, fact_shipments, ... │
+│  6 dimensiones + 1 fact · 15,157 filas                      │
 └──────────────────────┬─────────────────────────────────────┘
                        │
+                       │  TRANSFORMATION (agregaciones)
                        ▼
 ┌────────────────────────────────────────────────────────────┐
-│  KPIs (métricas precalculadas)                             │
-│  - Revenue, Orders, AOV, Inventory Health, Logistics       │
+│  KPIS (métricas precalculadas)                             │
+│  4 tablas · 218 filas                                       │
 └──────────────────────┬─────────────────────────────────────┘
                        │
+                       │  FastAPI (puerto 8001)
                        ▼
 ┌────────────────────────────────────────────────────────────┐
-│  DASHBOARD (React + FastAPI)                               │
+│  API REST (9 endpoints)                                     │
+└──────────────────────┬─────────────────────────────────────┘
+                       │
+                       │  React + Vite (puerto 5173)
+                       ▼
+┌────────────────────────────────────────────────────────────┐
+│  DASHBOARD (5 páginas responsive)                           │
+│  Overview · Sales · Products · States · Channels            │
 └────────────────────────────────────────────────────────────┘
 Stack técnico
 Categoría	Tecnología
-Lenguaje	Python 3.13
+Lenguaje (backend)	Python 3.13
 Conexión a DBs	psycopg 3 + SQLAlchemy 2.1
 Migraciones	Alembic 1.20
 Almacenamiento	PostgreSQL 16 (en Docker)
-Orquestación	Python CLI (V1) · Airflow (V2)
-Transformaciones	SQL puro + SQLAlchemy (V1) · dbt (V3)
-API de KPIs	FastAPI
-Dashboard	React + TypeScript + Vite (planeado)
+API	FastAPI 0.115
+Lenguaje (frontend)	TypeScript 5.6
+Framework UI	React 19 + Vite 7
+Estilos	Tailwind CSS 3
+Data fetching	TanStack Query 5
+Gráficos	Recharts 2
+Routing	React Router 7
 Testing	pytest
 Linting	Ruff
 Capas del pipeline
-1. INGESTION
-Extrae los datos del simulador de forma incremental usando watermarks. Cada entidad tiene su propio watermark que dice hasta dónde se ha ingestado.
-
-Componentes:
-
-WatermarkStore: lee/escribe watermarks en meta.watermarks.
-
-RawLoader: UPSERT idempotente por _source_id.
-
-extractors/*: un extractor por entidad.
-
-Modos:
-
-full load: trae todos los datos cada vez (customers).
-
-incremental: solo trae lo nuevo desde el último watermark (orders, order_items).
-
-2. RAW
-Copia fiel de los datos del simulador. Sin transformar, sin limpiar.
-
-Reglas:
-
-Mismos nombres de columna que la fuente.
-
-Enums guardados como String (para tolerancia).
+RAW
+Copia fiel de los datos del simulador. Sin transformar.
 
 Metadata de ingesta: _raw_id, _source_id, _ingested_at, _ingestion_run_id, _source_table.
 
-Idempotencia garantizada por UNIQUE en _source_id.
+Tablas (8): customers, orders, order_items, states, categories, locations, products, product_variants.
 
-Por qué existe: si algo sale mal en capas siguientes, se puede reprocesar desde RAW. Es la fuente de verdad histórica.
+STAGING
+Datos limpios y tipados. Enums validados por CHECK constraints. Columnas derivadas (age, line_count).
 
-3. VALIDATION (pendiente)
-Reglas de Data Quality sobre los datos RAW antes de pasarlos a STAGING.
+ANALYTICAL
+Modelo estrella con surrogate keys deterministas (ROW_NUMBER()).
 
-Tipos de validación:
+Dimensiones (6): dim_date, dim_state, dim_customer, dim_product, dim_variant, dim_warehouse.
 
-Estructura, nulidad, unicidad, rangos.
+Hechos (1): fact_sales (grano: 1 fila = 1 línea de orden).
 
-Referencial (FKs existen).
+KPIS
+Métricas precalculadas con TRUNCATE + INSERT.
 
-Lógica (total = subtotal + shipping - discount).
+Tablas (4): revenue_daily, revenue_by_product, revenue_by_state, revenue_by_channel.
 
-Temporal (shipped_at >= order_date).
+API
+FastAPI en puerto 8001. Sirve los KPIs al dashboard.
 
-Resultado: PASS / WARN / FAIL. Los rechazos van a dq.rejected_records.
+Endpoints (9):
 
-4. STAGING (pendiente)
-Datos limpios, tipados y deduplicados.
+GET /health
 
-Transformaciones:
+GET /health/database
 
-Conversión de tipos (texto → número, fecha, decimal).
+GET /api/v1/kpis/overview
 
-Normalización (mayúsculas, trim).
+GET /api/v1/kpis/revenue/daily
 
-Deduplicación.
+GET /api/v1/kpis/revenue/products
 
-Derivaciones básicas.
+GET /api/v1/kpis/revenue/states
 
-5. ANALYTICAL (pendiente)
-Modelo dimensional tipo estrella.
+GET /api/v1/kpis/revenue/channels
 
-Dimensiones:
+GET /api/v1/kpis/revenue/categories
 
-dim_date, dim_customer, dim_product, dim_variant.
+GET /api/v1/kpis/revenue/daily/raw
 
-dim_warehouse, dim_state.
+Dashboard
+React + Vite en puerto 5173. Diseño responsive (móvil, tablet, desktop).
 
-Hechos:
+Páginas (5):
 
-fact_sales, fact_inventory, fact_shipments, fact_purchases.
+Overview — 8 KPIs + gráficos (pie por canal, bar por categoría).
 
-6. KPIs (pendiente)
-Métricas precalculadas para servir rápido al dashboard.
+Sales — serie temporal + comparación por canal.
 
-Familias:
+Products — top 10 + tabla ordenable.
 
-Ventas: Revenue, Orders, Units Sold, AOV.
+States — distribución geográfica con colores por grupo.
 
-Inventario: Stock, Low Stock, Stockout, Turnover.
-
-Logística: On-Time Delivery, Avg Delivery Time, Carrier Performance.
-
-Procurement: Supplier Lead Time, Reliability, Cost.
-
-7. DASHBOARD (pendiente)
-Aplicación React que consume los KPIs vía API intermedia.
+Channels — comparativa ONLINE vs STORE con insight.
 
 Modelo de datos
 Schemas
 text
 retail_analytics
-├── raw           ← copia fiel de la fuente
+├── raw           ← copia fiel
 ├── staging       ← limpio y tipado
-├── analytical    ← modelo estrella (dims + facts)
+├── analytical    ← modelo estrella
 ├── kpis          ← métricas precalculadas
-├── dq            ← data quality
+├── dq            ← data quality (pendiente V1.1)
 └── meta          ← control del pipeline
-Tablas RAW implementadas (11)
-Tabla RAW	Estado	Modo
-raw.customers	✅ poblada (10,000)	full
-raw.orders	✅ poblada (188)	incremental
-raw.order_items	✅ poblada (435)	incremental
-raw.products	pendiente	—
-raw.product_variants	pendiente	—
-raw.states	pendiente	—
-raw.locations	pendiente	—
-raw.shipments	pendiente	—
-raw.carriers	pendiente	—
-raw.categories	pendiente	—
-raw.inventory_movements	pendiente	—
-Tablas meta
-meta.watermarks: control de ingesta por entidad.
-
-meta.pipeline_runs: log de cada corrida del pipeline.
-
+Conteos actuales
+Schema	Tablas	Filas
+raw	8	11,339
+staging	8	11,339
+analytical	7	15,157
+kpis	4	218
+meta	2	runs + watermarks
 Ingesta incremental
-El pipeline usa watermarks para saber hasta dónde llegó la última ingesta.
+El pipeline usa watermarks para traer solo datos nuevos.
 
-Cómo funciona
 text
 1. Leer watermark de la entidad
-       ↓
 2. Extraer del origen los registros > watermark
-       ↓
 3. Cargar a RAW con UPSERT (idempotente)
-       ↓
 4. Actualizar watermark con la fecha/id del último registro
-Ejemplo con orders
-text
-Watermark actual: last_date=2026-05-15, last_id=ORD-2026-003421
+Verificado: correr el pipeline dos veces no duplica datos.
 
-Query al origen:
-    SELECT * FROM orders
-    WHERE order_date > '2026-05-15'
-       OR (order_date = '2026-05-15' AND order_number > 'ORD-2026-003421')
-    ORDER BY order_date, order_number
+API de KPIs
+FastAPI en http://localhost:8001. Documentación automática en /docs.
 
-Resultado: solo las órdenes nuevas.
+Ejemplo: Overview
+bash
+curl http://localhost:8001/api/v1/kpis/overview
+json
+{
+  "total_revenue": "257536.00",
+  "total_orders": 406,
+  "total_units": 464,
+  "aov": "634.33",
+  "online_revenue": "157518.00",
+  "store_revenue": "100018.00",
+  "online_share": "0.6116",
+  "top_state": "Estado de México",
+  "top_category": "PLAYERAS"
+}
+Dashboard React
+React + Vite en http://localhost:5173. Diseño responsive con Tailwind CSS.
 
-Después de cargar:
-    watermark.last_date = 2026-05-20
-    watermark.last_id   = ORD-2026-004012
-    watermark.rows_last_run = 47
-    watermark.status    = SUCCESS
-Idempotencia
-Si corres el pipeline dos veces seguidas sin cambios en el origen:
+Páginas
+Overview
+Snapshot general del negocio. 8 KPIs principales + 2 gráficos.
 
-text
-Segunda corrida:
-  extraídas 0 filas
-  0 filas procesadas
+Sales
+Análisis de ventas. Serie temporal con área, comparación por canal, detalle en tabla.
 
-Conteos en RAW: sin cambios (ni duplicados).
-Verificado y funcionando.
+Products
+Top 10 productos con gráfico de barras horizontal. Tabla completa con 32 productos, ordenable por revenue/units/orders/avg_price.
+
+States
+Distribución geográfica. Gráfico horizontal coloreado por grupo de ingreso (ALTO/MEDIO/BAJO) + tabla detallada con share.
+
+Channels
+Comparativa ONLINE vs STORE. Pie chart + bar chart + tarjetas detalladas + insight destacando que ONLINE supera a STORE (premisa del negocio).
 
 Instalación y uso
 Requisitos
@@ -291,11 +256,13 @@ Docker Desktop corriendo
 
 Python 3.13
 
+Node.js 20+ y npm 10+
+
 Git
 
-El simulador (retail-operations-simulator) corriendo con datos
+El simulador (retail-operations-simulator) con datos
 
-Setup
+Setup backend
 bash
 # Clonar
 git clone https://github.com/fabianmm83/retail-data-platform.git
@@ -303,76 +270,75 @@ cd retail-data-platform
 
 # Crear venv
 python -m venv .venv
-.venv\Scripts\activate     # Windows
-# source .venv/bin/activate  # macOS/Linux
+.venv\Scripts\activate
 
-# Instalar dependencias
+# Instalar
 pip install -e ".[dev]"
 
 # Configurar .env
 copy .env.example .env
 
-# Levantar PostgreSQL del data platform
+# Levantar PostgreSQL
 docker compose up -d
 
 # Aplicar migraciones
 alembic upgrade head
-Uso
+Setup dashboard
 bash
-# Correr todo el pipeline (customers, orders, order_items)
+cd dashboard
+npm install
+Uso diario
+Terminal 1 — Pipeline + API:
+
+bash
+cd retail-data-platform
+.venv\Scripts\activate
+
+# Pipeline completo (RAW → STAGING → ANALYTICAL → KPIS)
 python -m app.pipeline --entities all
+python -m app.staging --entities all
+python -m app.analytical --entities all
+python -m app.kpis --entities all
 
-# Correr una entidad específica
-python -m app.pipeline --entities orders
+# API
+uvicorn app.main:app --reload --port 8001
+Terminal 2 — Dashboard:
 
-# Correr varias entidades
-python -m app.pipeline --entities orders,order_items
-
-# Verbose
-python -m app.pipeline --entities all --verbose
-Verificar el estado
 bash
-# Conteos en RAW
-docker exec retail-analytics-postgres psql -U analytics_user -d retail_analytics -c "SELECT COUNT(*) FROM raw.orders;"
+cd retail-data-platform/dashboard
+npm run dev
+Abrir:
 
-# Watermarks
-docker exec retail-analytics-postgres psql -U analytics_user -d retail_analytics -c "SELECT * FROM meta.watermarks;"
+API docs: http://localhost:8001/docs
 
-# Runs del pipeline
-docker exec retail-analytics-postgres psql -U analytics_user -d retail_analytics -c "SELECT * FROM meta.pipeline_runs ORDER BY id;"
+Dashboard: http://localhost:5173
+
 Estructura del proyecto
 text
 retail-data-platform/
-├── alembic/
-│   ├── env.py
-│   └── versions/
-│       ├── 3d3d7d8a42b5_001_create_schemas.py
-│       ├── 7eb1b5be4e23_002_create_raw_orders.py
-│       ├── aab900c3942f_003_create_raw_core_tables.py
-│       └── 66baa12b65f1_004_create_meta_tables.py
-├── alembic.ini
+├── alembic/                    # 10 migraciones
 ├── app/
-│   ├── core/                    # config
-│   ├── db/                      # engines + Base
-│   ├── ingestion/
-│   │   ├── extractors/
-│   │   │   ├── customers.py
-│   │   │   ├── orders.py
-│   │   │   └── order_items.py
-│   │   ├── loader.py            # UPSERT a RAW
-│   │   ├── source_models.py     # modelos del origen
-│   │   └── watermark_store.py
-│   ├── raw/                     # 11 modelos RAW
-│   ├── meta/                    # watermarks + pipeline_runs
-│   ├── staging/                 # (pendiente)
-│   ├── analytical/              # (pendiente)
-│   ├── kpis/                    # (pendiente)
-│   ├── validation/              # (pendiente)
-│   ├── api/                     # (pendiente)
-│   └── pipeline/
-│       ├── runner.py            # orquestador
-│       └── __main__.py          # CLI
-├── dashboard/                   # (planeado)
+│   ├── core/                   # config
+│   ├── db/                     # engines
+│   ├── ingestion/              # extractores + loader
+│   ├── raw/                    # 8 modelos RAW
+│   ├── staging/                # 8 modelos STAGING
+│   ├── analytical/             # 6 dims + 1 fact
+│   ├── kpis/                   # 4 KPIs
+│   ├── meta/                   # watermarks + runs
+│   ├── api/                    # FastAPI
+│   ├── schemas/                # Pydantic
+│   └── pipeline/               # orquestador
+├── dashboard/                  # React app
+│   ├── src/
+│   │   ├── components/         # Layout, KPICard, Grid, etc.
+│   │   ├── pages/              # 5 páginas
+│   │   └── lib/                # api, format, hooks
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── tailwind.config.js
+├── docs/
+│   └── reportes/
 ├── tests/
 ├── docker-compose.yml
 ├── Dockerfile
@@ -380,15 +346,35 @@ retail-data-platform/
 ├── README.md
 └── ARCHITECTURE.md
 Próximos pasos
-□ BLOQUE 5 — STAGING: limpieza, tipado, deduplicación.
-□ BLOQUE 6 — ANALYTICAL: dims + facts (modelo estrella).
-□ BLOQUE 7 — KPIs: precalcular métricas de negocio.
-□ BLOQUE 8 — API intermedia: FastAPI para servir KPIs.
-□ BLOQUE 9 — Dashboard React.
-□ Data Quality: reglas + DQ Score + rechazos.
-□ Airflow para orquestación (V2).
-□ dbt para transformaciones versionadas (V3).
-□ Cloud (BigQuery / Snowflake) (V4).
+V1.1 — Completar entidades
+□ Extractor de shipments
+□ Extractor de suppliers
+□ Extractor de purchase orders
+□ Extractor de returns
+□ Extractor de inventory_movements
+□ fact_inventory
+□ fact_shipments
+□ fact_purchases
+V1.2 — Data Quality
+□ Capa VALIDATION con reglas DQ
+□ DQ Score
+□ Rechazos y reconciliación
+V1.3 — Dashboard extendido
+□ Páginas: Inventory, Logistics, Procurement, Customers
+□ Filtros globales (fecha, estado, canal)
+□ Comparación de periodos
+V2 — Orquestación
+□ Airflow para orquestar el pipeline
+□ DAG con dependencias
+□ Scheduling automático
+V3 — dbt
+□ Migrar transformaciones a dbt
+□ Tests de dbt
+□ Documentación de linaje
+V4 — Cloud
+□ Migrar a BigQuery o Snowflake
+□ Particionamiento y clustering
+□ CI/CD con GitHub Actions
 Licencia
 MIT. Ver LICENSE para detalles.
 
@@ -399,3 +385,4 @@ retail-data-platform — Este repositorio.
 
 Contacto
 GitHub: @fabianmm83
+

@@ -1,6 +1,6 @@
 # Arquitectura — Retail Data Platform
 
-Documento técnico sobre las decisiones de diseño del pipeline de datos.
+Documento técnico sobre las decisiones de diseño del pipeline de datos y el dashboard.
 
 ---
 
@@ -10,11 +10,11 @@ Documento técnico sobre las decisiones de diseño del pipeline de datos.
 2. [Filosofía de diseño](#filosofía-de-diseño)
 3. [Capas del pipeline](#capas-del-pipeline)
 4. [Estructura de schemas](#estructura-de-schemas)
-5. [Modelos RAW](#modelos-raw)
-6. [Ingesta incremental](#ingesta-incremental)
-7. [Idempotencia](#idempotencia)
-8. [Trazabilidad](#trazabilidad)
-9. [Manejo de errores](#manejo-de-errores)
+5. [Ingesta incremental](#ingesta-incremental)
+6. [Modelo estrella](#modelo-estrella)
+7. [KPIs](#kpis)
+8. [API](#api)
+9. [Dashboard](#dashboard)
 10. [Decisiones técnicas](#decisiones-técnicas)
 11. [Limitaciones de V1](#limitaciones-de-v1)
 12. [Roadmap](#roadmap)
@@ -23,384 +23,251 @@ Documento técnico sobre las decisiones de diseño del pipeline de datos.
 
 ## Visión general
 
-El data platform consume datos del simulador y los transforma en analítica. Sigue el **método Google** de data engineering: 5 principios fundamentales.
+El data platform consume datos del simulador y los transforma en analítica visual, siguiendo el **método Google** de data engineering.
 
 ```text
 1. Ingest everything raw       → capa RAW
 2. Store in a canonical form   → capa STAGING
-3. Validate early              → capa VALIDATION
+3. Validate early              → capa VALIDATION (V1.2)
 4. Model for analysis          → capa ANALYTICAL
-5. Serve fast                  → capa KPIs + API
-Todas las operaciones del pipeline son:
-
-Idempotentes: correr dos veces no duplica datos.
-
-Incrementales: solo procesa lo nuevo.
-
-Trazables: cada corrida deja un registro.
-
-Recuperables: si falla, hace rollback y se puede reintentar.
+5. Serve fast                  → KPIS + API + Dashboard
+Todas las operaciones son idempotentes, incrementales, trazables y recuperables.
 
 Filosofía de diseño
 Principio 1 — RAW como fuente de verdad
-La capa RAW es una copia fiel de la fuente. Nunca se modifica manualmente. Si algo falla en las capas siguientes, se puede reprocesar desde RAW.
+La capa RAW es copia fiel. Nunca se modifica manualmente.
 
 Principio 2 — Idempotencia por diseño
-Todo loader usa UPSERT por _source_id. Correr el pipeline dos veces con los mismos datos no duplica nada.
+Todo loader usa UPSERT por _source_id. Todo transformer usa TRUNCATE + INSERT. Correr dos veces deja el mismo estado.
 
 Principio 3 — Ingesta incremental
-El pipeline usa watermarks para traer solo los datos nuevos. No reprocesa todo cada vez.
+Watermarks por entidad. Solo se trae lo nuevo.
 
-Principio 4 — Trazabilidad completa
-Cada corrida tiene un run_id. Cada fila insertada guarda su _ingestion_run_id. Se puede reconstruir "qué filas vinieron de qué corrida".
+Principio 4 — Surrogate keys deterministas
+ROW_NUMBER() ordenado por business key (customer_code, style_code, sku, etc.). Mismo input → mismo key.
 
-Principio 5 — Transaccionalidad
-Cada entidad se ingesta en una transacción. Si falla, hace rollback y marca el run como FAILED.
+Principio 5 — Modelo estrella (Kimball)
+Dimensiones desnormalizadas, hechos con FKs a dims, surrogate keys en todo.
+
+Principio 6 — KPIs precalculados
+TRUNCATE + INSERT de agregaciones. Los dashboards leen rápido sin recalcular.
+
+Principio 7 — API como contrato
+El dashboard consume la API, nunca la DB directamente. Permite cambiar el backend sin tocar el frontend.
+
+Principio 8 — Responsive desde el inicio
+El dashboard se diseña para móvil, tablet y desktop. No es un "agregado".
 
 Capas del pipeline
-text
-INGESTION → RAW → VALIDATION → STAGING → ANALYTICAL → KPIs → DASHBOARD
-Estado actual
-Capa	Estado
-INGESTION	✅ funcional (3 entidades)
-RAW	✅ funcional (11 tablas, 3 pobladas)
-VALIDATION	⏳ pendiente
-STAGING	⏳ pendiente
-ANALYTICAL	⏳ pendiente
-KPIs	⏳ pendiente
-DASHBOARD	⏳ pendiente
+Capa	Estado	Filas	Propósito
+INGESTION	✅	—	Extrae del simulador
+RAW	✅	11,339	Copia fiel
+VALIDATION	⏳ V1.2	—	Reglas de calidad
+STAGING	✅	11,339	Limpio y tipado
+ANALYTICAL	✅	15,157	Modelo estrella
+KPIS	✅	218	Métricas precalculadas
+API	✅	—	FastAPI en 8001
+DASHBOARD	✅	—	React en 5173
 Estructura de schemas
-PostgreSQL destino (retail_analytics) organiza las tablas en 6 schemas:
-
 text
-raw           ← copia fiel de la fuente
-staging       ← limpio y tipado
-analytical    ← modelo estrella (dims + facts)
-kpis          ← métricas precalculadas
-dq            ← data quality (rechazos, scores)
-meta          ← control del pipeline
-Por qué schemas separados:
-
-Aislamiento lógico: cada capa con su propósito.
-
-Control de acceso: se pueden otorgar permisos por schema.
-
-Claridad: al ver el nombre de una tabla, sabes qué capa es.
-
-Flexibilidad: cada schema puede tener políticas de retención distintas.
-
-Modelos RAW
-Estructura común
-Todas las tablas RAW heredan de RawMixin:
-
-python
-class RawMixin:
-    _raw_id: Mapped[int]           # BIGSERIAL PK (técnico)
-    _source_id: Mapped[str]        # UUID del origen (UNIQUE)
-    _ingested_at: Mapped[datetime] # timestamp real
-    _ingestion_run_id: Mapped[str] # run_id de la ingesta
-    _source_table: Mapped[str]     # tabla origen
-Por qué enums como string
-En la fuente, los campos enum son tipos nativos de PostgreSQL. En RAW, se guardan como String.
-
-Razón: RAW debe ser lo más tolerante posible. Si el origen agrega un nuevo valor al enum, RAW no debe romperse.
-
-Implementación: en los extractores usamos ::text para castear los enums a string en la query.
-
-Por qué metadata adicional
-Cinco columnas adicionales:
-
-_raw_id: PK técnica (BIGSERIAL). No es el UUID del origen.
-
-_source_id: UUID del origen. Se usa para UPSERT idempotente.
-
-_ingested_at: cuándo se cargó.
-
-_ingestion_run_id: qué corrida del pipeline lo trajo.
-
-_source_table: de qué tabla origen vino.
-
-Permiten:
-
-Reprocesar sin duplicar.
-
-Auditar qué llegó y cuándo.
-
-Filtrar por corrida específica.
-
+retail_analytics
+├── raw           ← copia fiel
+├── staging       ← limpio y tipado
+├── analytical    ← modelo estrella
+├── kpis          ← métricas precalculadas
+├── dq            ← data quality (pendiente V1.2)
+└── meta          ← control del pipeline
 Ingesta incremental
 Watermark
-Un watermark por entidad. Registra hasta dónde se ha ingestado.
-
 text
 meta.watermarks
-├── entity_name         ('orders')
-├── last_watermark_date (2026-05-15)
-├── last_watermark_id   (ORD-2026-003421)
-├── last_run_at         (timestamp real)
-├── rows_last_run       (47)
-└── status              (SUCCESS | FAILED | RUNNING)
-Modos de ingesta
-Full load:
+├── entity_name
+├── last_watermark_date
+├── last_watermark_id
+├── last_run_at
+├── rows_last_run
+└── status (SUCCESS | FAILED | RUNNING)
+Modos
+Full load: customers, states, categories, locations, products, product_variants.
 
-sql
-SELECT * FROM customers ORDER BY customer_code
-Se usa para entidades que:
-
-No cambian durante la simulación.
-
-Son pocas (10,000 filas o menos).
-
-No tienen un timestamp natural.
-
-Incremental:
-
-sql
-SELECT * FROM orders
-WHERE order_date > :watermark_date
-   OR (order_date = :watermark_date AND order_number > :watermark_id)
-ORDER BY order_date, order_number
-Se usa para entidades que:
-
-Crecen con el tiempo.
-
-Tienen una fecha o timestamp natural.
-
-Son grandes.
-
-El "truco" del watermark_id vacío
-Cuando no hay watermark previo, watermark_id = None. PostgreSQL falla con:
-
-text
-AmbiguousParameter: could not determine data type of parameter $2
-Solución: usar string vacío "" en lugar de NULL.
-
-python
-wid = watermark_id if watermark_id is not None else ""
-Y la query:
-
-sql
-WHERE order_date > :wdate
-   OR (order_date = :wdate AND order_number > :wid)
-order_number > '' siempre es true (cualquier string es mayor que vacío). Resultado: en la primera corrida se trae todo lo que tenga order_date >= wdate.
+Incremental: orders, order_items (por order_date).
 
 Idempotencia
-UPSERT por _source_id
-python
-stmt = pg_insert(model).values(enriched)
-update_cols = {
-    col.name: stmt.excluded[col.name]
-    for col in model.__table__.columns
-    if col.name not in ("_raw_id", "_ingested_at")
-}
-stmt = stmt.on_conflict_do_update(
-    index_elements=["_source_id"],
-    set_=update_cols,
-)
-Por qué funciona:
+UPSERT por _source_id con ON CONFLICT DO UPDATE. Verificado: segunda corrida trae 0 filas.
 
-Si _source_id no existe → INSERT.
+Modelo estrella
+Dimensiones (6)
+Dim	Surrogate key	Business key
+dim_date	date_key (YYYYMMDD)	full_date
+dim_state	state_key (INT)	state_id (UUID)
+dim_customer	customer_key (INT)	customer_id (UUID)
+dim_product	product_key (INT)	product_id (UUID)
+dim_variant	variant_key (INT)	variant_id (UUID)
+dim_warehouse	warehouse_key (INT)	location_id (UUID)
+Hechos (1)
+fact_sales: 1 fila = 1 línea de orden. FKs a las 6 dimensiones + business keys (order_id, order_number).
 
-Si _source_id ya existe → UPDATE de todos los campos excepto _raw_id y _ingested_at.
+Decisiones clave
+Surrogate keys INTEGER (no UUID): más rápidos para JOINs.
 
-Verificación
-text
-Corrida 1:  extraídas 188 filas, 188 procesadas
-Corrida 2:  extraídas 0 filas (watermark avanzado)
-sql
-SELECT COUNT(*) FROM raw.orders;  -- 188 (no duplicado)
-Trazabilidad
-run_id
-Formato: ING-YYYYMMDD-HHMMSS-8hex
+Determinismo: ROW_NUMBER() ordenado por business key.
 
-Ejemplo: ING-20261015-201927-bd7cf0f2
+SCD Tipo 2: no en V1 (se puede agregar después sin romper nada).
 
-Cada corrida del pipeline genera uno. Se guarda en:
+dim_date generada 2020–2030 con generate_series.
 
-meta.pipeline_runs.run_id: registro de la corrida.
+KPIs
+Tablas (4)
+KPI	Grano	Filas
+revenue_daily	día × estado × canal × categoría	174
+revenue_by_product	producto × mes	32
+revenue_by_state	estado × mes	10
+revenue_by_channel	canal × mes	2
+Estrategia
+TRUNCATE + INSERT full refresh. Con volúmenes actuales (218 filas) es instantáneo. En V2 se puede migrar a incremental.
 
-raw.*._ingestion_run_id: cada fila insertada.
+API
+Stack
+FastAPI 0.115 + Pydantic 2 + Uvicorn.
 
-pipeline_runs
-text
-meta.pipeline_runs
-├── run_id              (ING-...)
-├── started_at
-├── finished_at
-├── status              (RUNNING | SUCCESS | FAILED)
-├── entities_processed  (CSV)
-├── rows_ingested       (total)
-└── error_message       (si falla)
-Consultas útiles
-sql
--- ¿Qué filas trajo la corrida X?
-SELECT * FROM raw.orders WHERE _ingestion_run_id = 'ING-...';
+Endpoints
+Método	Ruta	Descripción
+GET	/health	Health check
+GET	/health/database	Health DB
+GET	/api/v1/kpis/overview	Snapshot general
+GET	/api/v1/kpis/revenue/daily	Serie temporal
+GET	/api/v1/kpis/revenue/products	Top productos
+GET	/api/v1/kpis/revenue/states	Revenue por estado
+GET	/api/v1/kpis/revenue/channels	Revenue por canal
+GET	/api/v1/kpis/revenue/categories	Revenue por categoría
+Decisiones
+Puerto 8001: el simulador usa 8000.
 
--- ¿Cuándo fue la última ingesta exitosa de orders?
-SELECT * FROM meta.pipeline_runs
-WHERE entities_processed LIKE '%orders%'
-  AND status = 'SUCCESS'
-ORDER BY finished_at DESC LIMIT 1;
-Manejo de errores
-Transaccionalidad
-Cada entidad se ingesta en una transacción. Si falla:
+CORS: localhost:5173 para el dashboard.
 
-target_db.rollback() revierte los cambios.
+Sin autenticación en V1: es una demo local.
 
-meta.pipeline_runs.status = 'FAILED'.
+Schemas Pydantic: valida responses automáticamente.
 
-meta.pipeline_runs.error_message guarda la causa.
+Dashboard
+Stack
+Vite 7 + React 19 + TypeScript 5.6 + Tailwind CSS 3 + TanStack Query 5 + Recharts 2 + React Router 7.
 
-La excepción se propaga al caller.
+Páginas (5)
+Página	Propósito	Gráficos
+Overview	Snapshot general	Pie canal + Bar categoría
+Sales	Serie temporal + canales	Area revenue + Bar canal
+Products	Top productos	Bar horizontal + tabla
+States	Distribución geográfica	Bar horizontal por grupo
+Channels	Online vs Store	Pie + Bar + cards
+Responsive
+Móvil (375px): 1 columna, sidebar colapsado con hamburguesa.
 
-Estado de watermarks
-RUNNING: cuando empieza la ingesta.
+Tablet (768px): 2 columnas donde aplique.
 
-SUCCESS: cuando termina exitosamente.
+Desktop (1440px): layout completo, sidebar visible.
 
-FAILED: cuando algo falla.
-
-Si el proceso se interrumpe (Ctrl+C), el watermark queda en RUNNING y hay que limpiarlo:
-
-sql
-UPDATE meta.watermarks SET status = 'FAILED' WHERE status = 'RUNNING';
-UPDATE meta.pipeline_runs SET status = 'FAILED' WHERE status = 'RUNNING';
-Reintentos
-Como la ingesta es idempotente, se puede reintentar sin problemas:
-
-bash
-python -m app.pipeline --entities orders
-Si falla a la mitad, el próximo intento retoma desde el último watermark exitoso.
+Data fetching
+TanStack Query con staleTime: 5min y refetchOnWindowFocus: false. Proxy Vite /api → localhost:8001.
 
 Decisiones técnicas
-UUID v4 en RAW como String
-En la fuente, los IDs son UUID. En RAW los guardamos como UUID(as_uuid=False) (string).
-
-Por qué string:
-
-RAW debe ser tolerante.
-
-Si el origen cambia de UUID a otro tipo, RAW no se rompe.
-
-Es más fácil de inspeccionar.
-
-Enums como String
-Igual que arriba. RAW tolera cualquier valor, incluso inválidos.
-
 Dos engines de DB
-python
-source_engine = create_engine(settings.source_database_url)  # 5434
-target_engine = create_engine(settings.target_database_url)  # 5435
-Por qué dos engines:
+source_engine (5434, solo lectura) y target_engine (5435, lectura/escritura).
 
-El origen es solo lectura.
+UUID + business codes en RAW
+PK técnica _raw_id (BIGSERIAL), UUID del origen en _source_id (UNIQUE). Metadata de ingesta para trazabilidad.
 
-El destino es lectura/escritura.
+Enums como String en RAW/STAGING
+Tolerancia. Si el origen agrega valores, RAW no se rompe. Validación con CHECK constraints.
 
-Se pueden aplicar políticas distintas (pool size, timeouts).
+Surrogate keys INTEGER
+ROW_NUMBER() con ORDER BY business_key para determinismo. Índices más pequeños, JOINs más rápidos.
 
-Nunca se escribe al origen desde el data platform.
+SQL puro para transformaciones
+text() en lugar del ORM. Más explícito, más rápido, versionable en Git, migrable a dbt en V3.
 
-Modelos de origen locales
-El data platform no importa los modelos del simulador. Define sus propios modelos en app/ingestion/source_models.py.
+Tres runners independientes
+python -m app.pipeline, python -m app.staging, python -m app.analytical, python -m app.kpis. Cada uno es idempotente y registra en meta.pipeline_runs.
 
-Por qué:
-
-Desacoplamiento: dos repos independientes.
-
-Control: si el simulador cambia, solo el origen se ve afectado.
-
-Claridad: los modelos de origen son explícitamente read-only.
-
-SQL puro para extractores
-Los extractores usan text() en lugar del ORM.
-
-Por qué:
-
-Permite ::text para castear enums sin complicaciones.
-
-Es más rápido para bulk selects.
-
-Más explícito (se ve el SQL).
-
-Más fácil de optimizar.
+Migración en 3 pasos para columnas nuevas
+Cuando se agrega una columna NOT NULL a una tabla con datos: (1) nullable, (2) backfill, (3) NOT NULL.
 
 Limitaciones de V1
 Cobertura
-Solo 3 de las 11 tablas RAW están implementadas en el pipeline.
+Solo 8 entidades RAW cargadas (de las 11 modeladas).
 
-Las otras 8 (products, variants, states, locations, shipments, carriers, categories, inventory_movements) están creadas pero vacías.
+Faltan shipments, suppliers, purchase_orders, returns, inventory_movements.
+
+Faltan facts: fact_inventory, fact_shipments, fact_purchases.
 
 Capas
-VALIDATION, STAGING, ANALYTICAL, KPIs, DASHBOARD no están implementadas.
+VALIDATION no implementada (V1.2).
+
+DQ Score no implementado (V1.2).
+
+Rechazos y reconciliación no implementados (V1.2).
+
+Dashboard
+Solo 5 páginas de ventas.
+
+Sin filtros globales (fecha, estado, canal).
+
+Sin comparación de periodos.
 
 Orquestación
-Sin Airflow. El pipeline se corre manualmente vía CLI.
+Sin Airflow. Los runners se corren manualmente.
+
+Sin scheduling automático.
 
 Performance
-Sin batch inserts con bulk_save_objects.
-
-Sin paralelización.
-
 Sin particionamiento.
 
-Data Quality
-Sin reglas de validación.
+Sin clustering.
 
-Sin DQ Score.
-
-Sin tabla de rechazos.
+Sin batch inserts con bulk_save_objects.
 
 Roadmap
-V1.1 — Completar 3 entidades prioritarias
-□ BLOQUE 5: STAGING (limpieza + tipado)
-□ BLOQUE 6: ANALYTICAL (dims + facts)
-□ BLOQUE 7: KPIs
-□ BLOQUE 8: API intermedia
-□ BLOQUE 9: Dashboard React
-V1.2 — Escalar entidades
-□ Agregar extractores para las 8 entidades restantes.
-□ Optimizar con batches.
-V1.3 — Data Quality
-□ Implementar capa VALIDATION.
-□ Reglas por entidad.
-□ DQ Score.
-□ Rechazos y reconciliación.
+V1.1 — Completar entidades y facts
+□ Extractor y transformer de shipments
+□ Extractor y transformer de suppliers + POs
+□ Extractor y transformer de returns
+□ Extractor y transformer de inventory_movements
+□ fact_inventory, fact_shipments, fact_purchases
+V1.2 — Data Quality
+□ Capa VALIDATION con reglas por entidad
+□ DQ Score con 6 dimensiones
+□ Rechazos + reconciliación
+□ Alertas en dashboard
+V1.3 — Dashboard extendido
+□ Páginas: Inventory, Logistics, Procurement, Customers
+□ Filtros globales (fecha, estado, canal)
+□ Comparación de periodos
+□ Exportar a CSV/PDF
 V2 — Orquestación
-□ Airflow para orquestar el pipeline.
-□ DAG con dependencias entre entidades.
-□ Scheduling automático.
+□ Airflow DAG con dependencias
+□ Scheduling diario
+□ Alertas por fallos
 V3 — dbt
-□ Migrar transformaciones a dbt.
-□ Tests de dbt.
-□ Documentación de linaje.
+□ Migrar transformaciones a dbt
+□ Tests de dbt integrados
+□ Linaje automático
 V4 — Cloud
-□ Migrar a BigQuery o Snowflake.
-□ Particionamiento y clustering.
-□ CI/CD con GitHub Actions.
+□ Migrar a BigQuery o Snowflake
+□ CI/CD con GitHub Actions
+□ Particionamiento y clustering
 Conclusión
-El data platform implementa el método Google de data engineering:
+El data platform implementa el método Google completo:
 
-Ingest everything raw: RAW es copia fiel.
+Ingest everything raw → RAW (8 tablas)
 
-Store in a canonical form: STAGING impone un formato único.
+Store in canonical form → STAGING (8 tablas)
 
-Validate early: VALIDATION rechaza datos malos.
+Validate early → V1.2
 
-Model for analysis: ANALYTICAL usa star schema.
+Model for analysis → ANALYTICAL (6 dims + 1 fact)
 
-Serve fast: KPIs precalculados + API + Dashboard.
+Serve fast → KPIS (4 tablas) + API (9 endpoints) + Dashboard (5 páginas)
 
-El pipeline es:
+Con idempotencia, incrementalidad, trazabilidad y reproducibilidad verificadas.
 
-Idempotente: correr dos veces no duplica.
-
-Incremental: watermarks evitan reprocesar.
-
-Trazable: run_id en cada fila.
-
-Recuperable: rollback y reintento.
-
-Es la base sólida sobre la cual se construye el resto del ecosistema analítico.
-
-Última actualización: 2026-10-15
+Última actualización: 2026-10-22

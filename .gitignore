@@ -46,3 +46,4 @@ estructura.txt
 # Dashboard
 dashboard/node_modules/
 dashboard/dist/
+dashboard/.vite/
