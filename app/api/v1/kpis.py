@@ -11,10 +11,12 @@ from app.kpis.revenue_by_channel import KpiRevenueByChannel
 from app.kpis.revenue_by_product import KpiRevenueByProduct
 from app.kpis.revenue_by_state import KpiRevenueByState
 from app.kpis.revenue_daily import KpiRevenueDaily
+from app.kpis.logistics_performance import KpiLogisticsPerformance
 from app.schemas.kpis import (
     OverviewKPI,
     RevenueByCategoryRead,
     RevenueByChannelAggregated,
+     LogisticsPerformanceRead,
     RevenueByChannelRead,
     RevenueByProductRead,
     RevenueByStateAggregated,
@@ -298,3 +300,21 @@ def get_revenue_by_category(
             )
         )
     return result
+
+
+
+# =============================================================================
+# LOGISTICS
+# =============================================================================
+
+
+@router.get("/logistics", response_model=list[LogisticsPerformanceRead])
+def get_logistics_performance(
+    db: Session = Depends(get_db),
+) -> list[KpiLogisticsPerformance]:
+    """Performance logística por mes."""
+    stmt = select(KpiLogisticsPerformance).order_by(
+        KpiLogisticsPerformance.year,
+        KpiLogisticsPerformance.month,
+    )
+    return list(db.scalars(stmt).all())

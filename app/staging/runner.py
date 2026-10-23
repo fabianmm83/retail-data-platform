@@ -25,6 +25,7 @@ DEFAULT_ENTITIES = [
     "customers",
     "orders",
     "order_items",
+    "shipments",
 ]
 
 

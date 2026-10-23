@@ -162,6 +162,11 @@ TRANSFORM_DIM_PRODUCT_SQL = text(
 )
 
 
+
+
+
+
+
 def transform_dim_product(db: Session) -> int:
     """Carga los 32 productos con su categoría. Requiere staging.categories."""
     logger.info("→ analytical.dim_product")
@@ -171,6 +176,73 @@ def transform_dim_product(db: Session) -> int:
     rows = result.rowcount or 0
     logger.info("  %d filas", rows)
     return rows
+
+
+# =============================================================================
+# FACT_SHIPMENTS
+# =============================================================================
+
+TRANSFORM_FACT_SHIPMENTS_SQL = text(
+    """
+    INSERT INTO analytical.fact_shipments (
+        date_key,
+        warehouse_key,
+        shipment_id,
+        shipment_number,
+        tracking_number,
+        order_id,
+        status,
+        shipped_at,
+        estimated_delivery,
+        delivered_at,
+        lead_time_days,
+        is_on_time,
+        shipping_cost,
+        weight_kg
+    )
+    SELECT
+        COALESCE(
+            TO_CHAR(s.shipped_at, 'YYYYMMDD')::int,
+            TO_CHAR(s.created_at, 'YYYYMMDD')::int
+        ) AS date_key,
+        dw.warehouse_key,
+        s.id AS shipment_id,
+        s.shipment_number,
+        s.tracking_number,
+        s.order_id,
+        s.status,
+        s.shipped_at,
+        s.estimated_delivery,
+        s.delivered_at,
+        CASE
+            WHEN s.delivered_at IS NOT NULL AND s.shipped_at IS NOT NULL
+                THEN (s.delivered_at - s.shipped_at)
+            ELSE NULL
+        END AS lead_time_days,
+        CASE
+            WHEN s.delivered_at IS NOT NULL AND s.estimated_delivery IS NOT NULL
+                THEN s.delivered_at <= s.estimated_delivery
+            ELSE NULL
+        END AS is_on_time,
+        s.shipping_cost,
+        s.weight_kg
+    FROM staging.shipments s
+    INNER JOIN analytical.dim_warehouse dw
+        ON dw.location_id = s.origin_location_id
+    """
+)
+
+
+def transform_fact_shipments(db: Session) -> int:
+    """Carga el hecho de shipments. Requiere dim_date y dim_warehouse."""
+    logger.info("→ analytical.fact_shipments")
+    db.execute(text("TRUNCATE TABLE analytical.fact_shipments CASCADE"))
+    result = db.execute(TRANSFORM_FACT_SHIPMENTS_SQL)
+    db.flush()
+    rows = result.rowcount or 0
+    logger.info("  %d filas", rows)
+    return rows
+
 
 # =============================================================================
 # DIM_VARIANT
@@ -386,10 +458,9 @@ TRANSFORMERS = {
     "dim_customer": transform_dim_customer,
     "dim_warehouse": transform_dim_warehouse,
     "fact_sales": transform_fact_sales,
+    "fact_shipments": transform_fact_shipments,
 }
 
-
-# Orden de ejecución (respeta FKs)
 TRANSFORM_ORDER = [
     "dim_date",
     "dim_state",
@@ -398,6 +469,7 @@ TRANSFORM_ORDER = [
     "dim_customer",
     "dim_warehouse",
     "fact_sales",
+    "fact_shipments",
 ]
 
 

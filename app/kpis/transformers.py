@@ -197,15 +197,81 @@ def transform_revenue_by_channel(db: Session) -> int:
     return rows
 
 
+
+# =============================================================================
+# LOGISTICS_PERFORMANCE
+# =============================================================================
+
+TRANSFORM_LOGISTICS_PERFORMANCE_SQL = text(
+    """
+    INSERT INTO kpis.logistics_performance (
+        year,
+        month,
+        shipments,
+        delivered,
+        delayed,
+        in_transit,
+        on_time_rate,
+        avg_lead_time_days,
+        avg_shipping_cost,
+        total_shipping_cost
+    )
+    SELECT
+        dd.year,
+        dd.month,
+        COUNT(*)::int AS shipments,
+        COUNT(*) FILTER (WHERE fs.status = 'DELIVERED')::int AS delivered,
+        COUNT(*) FILTER (WHERE fs.status = 'DELAYED')::int AS delayed,
+        COUNT(*) FILTER (
+            WHERE fs.status IN ('SHIPPED', 'IN_TRANSIT', 'OUT_FOR_DELIVERY')
+        )::int AS in_transit,
+        COALESCE(
+            (
+                COUNT(*) FILTER (
+                    WHERE fs.status = 'DELIVERED' AND fs.is_on_time = true
+                )::numeric
+                / NULLIF(
+                    COUNT(*) FILTER (WHERE fs.status = 'DELIVERED'),
+                    0
+                )
+            ),
+            0
+        )::numeric(5,4) AS on_time_rate,
+        COALESCE(
+            AVG(fs.lead_time_days) FILTER (WHERE fs.delivered_at IS NOT NULL),
+            0
+        )::numeric(6,2) AS avg_lead_time_days,
+        AVG(fs.shipping_cost)::numeric(10,2) AS avg_shipping_cost,
+        SUM(fs.shipping_cost)::numeric(14,2) AS total_shipping_cost
+    FROM analytical.fact_shipments fs
+    INNER JOIN analytical.dim_date dd ON dd.date_key = fs.date_key
+    GROUP BY dd.year, dd.month
+    ORDER BY dd.year, dd.month
+    """
+)
+
+
+def transform_logistics_performance(db: Session) -> int:
+    logger.info("→ kpis.logistics_performance")
+    db.execute(text("TRUNCATE TABLE kpis.logistics_performance"))
+    result = db.execute(TRANSFORM_LOGISTICS_PERFORMANCE_SQL)
+    db.flush()
+    rows = result.rowcount or 0
+    logger.info("  %d filas", rows)
+    return rows
+
+
+
+
 # =============================================================================
 # ORQUESTADOR
 # =============================================================================
-
 TRANSFORMERS = {
     "revenue_daily": transform_revenue_daily,
     "revenue_by_product": transform_revenue_by_product,
     "revenue_by_state": transform_revenue_by_state,
     "revenue_by_channel": transform_revenue_by_channel,
+    "logistics_performance": transform_logistics_performance,
 }
 
 TRANSFORM_ORDER = [
@@ -213,6 +279,7 @@ TRANSFORM_ORDER = [
     "revenue_by_product",
     "revenue_by_state",
     "revenue_by_channel",
+    "logistics_performance",
 ]
 
 

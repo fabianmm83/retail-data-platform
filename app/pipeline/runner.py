@@ -17,6 +17,7 @@ from app.ingestion.extractors import (
     extract_orders,
     extract_product_variants,
     extract_products,
+    extract_shipments,
     extract_states,
 )
 from app.ingestion.loader import RawLoader
@@ -29,6 +30,7 @@ from app.raw.order_items import RawOrderItem
 from app.raw.orders import RawOrder
 from app.raw.product_variants import RawProductVariant
 from app.raw.products import RawProduct
+from app.raw.shipments import RawShipment
 from app.raw.states import RawState
 
 
@@ -83,6 +85,12 @@ ENTITIES = {
         "source_table": "order_items",
         "mode": "incremental",
         "extractor": extract_order_items,
+    },
+    "shipments": {
+        "raw_model": RawShipment,
+        "source_table": "shipments",
+        "mode": "incremental",
+        "extractor": extract_shipments,
     },
 }
 

@@ -98,3 +98,22 @@ export const getRevenueByCategory = async (): Promise<RevenueByCategory[]> => {
   const { data } = await api.get('/kpis/revenue/categories');
   return data;
 };
+
+
+export interface LogisticsPerformance {
+  year: number;
+  month: number;
+  shipments: number;
+  delivered: number;
+  delayed: number;
+  in_transit: number;
+  on_time_rate: string;
+  avg_lead_time_days: string;
+  avg_shipping_cost: string;
+  total_shipping_cost: string;
+}
+
+export const getLogistics = async (): Promise<LogisticsPerformance[]> => {
+  const { data } = await api.get('/kpis/logistics');
+  return data;
+};

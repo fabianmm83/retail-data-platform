@@ -390,6 +390,59 @@ def transform_products(db: Session) -> int:
     logger.info("  %d filas", rows)
     return rows
 
+# =============================================================================
+# SHIPMENTS
+# =============================================================================
+
+TRANSFORM_SHIPMENTS_SQL = text(
+    """
+    INSERT INTO staging.shipments (
+        id,
+        shipment_number,
+        tracking_number,
+        order_id,
+        carrier_id,
+        origin_location_id,
+        status,
+        shipped_at,
+        estimated_delivery,
+        delivered_at,
+        shipping_cost,
+        weight_kg,
+        created_at,
+        updated_at
+    )
+    SELECT
+        r.id,
+        UPPER(TRIM(r.shipment_number)),
+        UPPER(TRIM(r.tracking_number)),
+        r.order_id,
+        r.carrier_id,
+        r.origin_location_id,
+        r.status,
+        r.shipped_at,
+        r.estimated_delivery,
+        r.delivered_at,
+        r.shipping_cost,
+        r.weight_kg,
+        r.created_at,
+        r.updated_at
+    FROM raw.shipments r
+    """
+)
+
+
+def transform_shipments(db: Session) -> int:
+    """Transforma raw.shipments → staging.shipments."""
+    logger.info("→ staging.shipments")
+    db.execute(text("TRUNCATE TABLE staging.shipments"))
+    result = db.execute(TRANSFORM_SHIPMENTS_SQL)
+    db.flush()
+    rows = result.rowcount or 0
+    logger.info("  %d filas", rows)
+    return rows
+
+
 
 # =============================================================================
 # PRODUCT VARIANTS
@@ -446,6 +499,7 @@ TRANSFORMERS = {
     "customers": transform_customers,
     "orders": transform_orders,
     "order_items": transform_order_items,
+    "shipments": transform_shipments,
 }
 
 

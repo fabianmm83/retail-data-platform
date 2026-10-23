@@ -8,6 +8,7 @@ from app.staging.orders import StagingOrder
 from app.staging.product_variants import StagingProductVariant
 from app.staging.products import StagingProduct
 from app.staging.runner import run_staging
+from app.staging.shipments import StagingShipment
 from app.staging.states import StagingState
 from app.staging.transformers import (
     transform_all,
@@ -18,6 +19,7 @@ from app.staging.transformers import (
     transform_orders,
     transform_product_variants,
     transform_products,
+    transform_shipments,
     transform_states,
 )
 
@@ -29,6 +31,7 @@ __all__ = [
     "StagingOrder",
     "StagingProductVariant",
     "StagingProduct",
+    "StagingShipment",
     "StagingState",
     "transform_all",
     "transform_categories",
@@ -38,6 +41,7 @@ __all__ = [
     "transform_orders",
     "transform_product_variants",
     "transform_products",
+    "transform_shipments",
     "transform_states",
     "run_staging",
 ]

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import {
+  getLogistics,
   getOverview,
   getRevenueByCategory,
   getRevenueByChannel,
@@ -43,4 +44,10 @@ export const useRevenueByCategory = () =>
   useQuery({
     queryKey: ['revenue-by-category'],
     queryFn: getRevenueByCategory,
+  });
+
+export const useLogistics = () =>
+  useQuery({
+    queryKey: ['logistics'],
+    queryFn: getLogistics,
   });

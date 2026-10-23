@@ -153,3 +153,22 @@ class RevenueByCategoryRead(BaseModel):
     units: int
     orders: int
     aov: Decimal
+    
+    # =============================================================================
+# LOGISTICS
+# =============================================================================
+
+
+class LogisticsPerformanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    year: int
+    month: int
+    shipments: int
+    delivered: int
+    delayed: int
+    in_transit: int
+    on_time_rate: Decimal
+    avg_lead_time_days: Decimal
+    avg_shipping_cost: Decimal
+    total_shipping_cost: Decimal
