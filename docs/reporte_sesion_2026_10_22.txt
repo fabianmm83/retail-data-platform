@@ -1,0 +1,307 @@
+================================================================================
+REPORTE DE SESIÓN — 22 DE OCTUBRE DE 2026
+Retail Data Platform — STAGING + ANALYTICAL + KPIS + API + DASHBOARD
+================================================================================
+
+--------------------------------------------------------------------------------
+RESUMEN EJECUTIVO
+--------------------------------------------------------------------------------
+
+Se completaron los bloques 5 a 9 del data platform en una sola sesión:
+
+  Bloque 5: STAGING
+  Bloque 6: ANALYTICAL
+  Bloque 7: KPIS
+  Bloque 8: API
+  Bloque 9: DASHBOARD
+
+El pipeline completo RAW → STAGING → ANALYTICAL → KPIS → API → Dashboard
+está funcionando end-to-end con idempotencia verificada.
+
+
+--------------------------------------------------------------------------------
+LOGROS
+--------------------------------------------------------------------------------
+
+1. BLOQUE 5 — STAGING (8 tablas)
+
+   - staging.customers       10,000 filas
+   - staging.orders             188 filas
+   - staging.order_items        435 filas
+   - staging.states              10 filas
+   - staging.categories          12 filas
+   - staging.locations           15 filas
+   - staging.products            32 filas
+   - staging.product_variants   647 filas
+   Total: 11,339 filas
+
+   Columnas derivadas: age (customers), line_count (orders).
+   CHECK constraints de enums.
+
+2. BLOQUE 6 — ANALYTICAL (7 tablas, star schema)
+
+   Dimensiones:
+   - dim_date        4,018 filas (2020-2030)
+   - dim_state          10 filas
+   - dim_product        32 filas
+   - dim_variant       647 filas
+   - dim_customer   10,000 filas
+   - dim_warehouse      15 filas
+
+   Hechos:
+   - fact_sales        435 filas (1 fila = 1 línea de orden)
+
+   Surrogate keys deterministas con ROW_NUMBER().
+   6 FKs en fact_sales + 3 FKs en dims.
+   Total: 15,157 filas
+
+3. BLOQUE 7 — KPIS (4 tablas)
+
+   - kpis.revenue_daily          174 filas
+   - kpis.revenue_by_product      32 filas
+   - kpis.revenue_by_state        10 filas
+   - kpis.revenue_by_channel       2 filas
+   Total: 218 filas
+
+   Agregaciones SQL idempotentes (TRUNCATE + INSERT).
+
+4. BLOQUE 8 — API (FastAPI puerto 8001)
+
+   9 endpoints:
+   - GET /health
+   - GET /health/database
+   - GET /api/v1/kpis/overview
+   - GET /api/v1/kpis/revenue/daily
+   - GET /api/v1/kpis/revenue/daily/raw
+   - GET /api/v1/kpis/revenue/products
+   - GET /api/v1/kpis/revenue/states
+   - GET /api/v1/kpis/revenue/states/raw
+   - GET /api/v1/kpis/revenue/channels
+   - GET /api/v1/kpis/revenue/categories
+
+   CORS configurado para localhost:5173.
+   Schemas Pydantic para validación.
+   Documentación automática en /docs.
+
+5. BLOQUE 9 — DASHBOARD (React + Vite puerto 5173)
+
+   5 páginas responsive:
+   - Overview    (8 KPIs + 2 charts)
+   - Sales       (área temporal + comparación canal)
+   - Products    (top 10 + tabla ordenable)
+   - States      (bar por grupo ingreso + tabla)
+   - Channels    (pie + bar + insight)
+
+   Stack: Vite 7 + React 19 + TypeScript 5.6 + Tailwind 3 +
+          TanStack Query 5 + Recharts 2 + React Router 7.
+
+   Responsive: móvil (375px), tablet (768px), desktop (1440px).
+
+
+--------------------------------------------------------------------------------
+DATOS FINALES
+--------------------------------------------------------------------------------
+
+CAPA            TABLAS   FILAS
+─────────────────────────────────
+RAW               8     11,339
+STAGING           8     11,339
+ANALYTICAL        7     15,157
+KPIS              4        218
+─────────────────────────────────
+
+API endpoints:    9
+Dashboard páginas: 5
+
+
+--------------------------------------------------------------------------------
+VALIDACIONES
+--------------------------------------------------------------------------------
+
+✓ Idempotencia RAW: segunda corrida trae 0 filas
+✓ Idempotencia STAGING: TRUNCATE + INSERT deja mismo estado
+✓ Idempotencia ANALYTICAL: mismos surrogate keys entre corridas
+✓ Idempotencia KPIS: TRUNCATE + INSERT deja mismo estado
+✓ Integridad fact_sales → dims: 0 huérfanos
+✓ Reconciliación staging.order_items → fact_sales: 435 = 435
+✓ Online share: 61.16% (premisa ONLINE > STORE cumplida)
+✓ Top categoría: PLAYERAS (producto estrella)
+✓ Top estado: Estado de México (mayor población relativa)
+
+
+--------------------------------------------------------------------------------
+INCIDENTES Y RESOLUCIONES
+--------------------------------------------------------------------------------
+
+1. NotNullViolation en migración 010
+
+   Síntoma:
+     column "category_code" of relation "dim_product" contains null values
+
+   Causa:
+     La migración autogenerada agregaba columnas NOT NULL a una tabla
+     con 32 filas existentes. PostgreSQL no permite esto sin default.
+
+   Solución:
+     Migración en 3 pasos:
+     1. Agregar columnas nullable.
+     2. UPDATE con JOIN a staging.categories.
+     3. ALTER COLUMN a NOT NULL.
+
+2. Tipos de Recharts en Tooltip formatter
+
+   Síntoma:
+     Type '(value: string) => string' is not assignable to type 'Formatter'
+
+   Causa:
+     El tipo esperado es más amplio (ValueType | undefined).
+
+   Solución:
+     Usar typeof value === 'number' ? formatCurrency(value) : String(value ?? '').
+
+3. Tipos de Recharts en Pie label
+
+   Síntoma:
+     Property 'channel' is missing in type 'PieLabelRenderProps'
+
+   Causa:
+     Recharts tipa el label con su propio tipo.
+
+   Solución:
+     Usar props.name ?? '' (name viene del nameKey).
+
+4. Case sensitivity de Loading.tsx
+
+   Síntoma:
+     Already included file name 'Loading.tsx' differs from 'loading.tsx'
+
+   Causa:
+     Conflicto de case en Windows + TypeScript.
+
+   Solución:
+     Verificar que solo existe Loading.tsx (mayúscula) y limpiar cache
+     de TypeScript si persiste.
+
+
+--------------------------------------------------------------------------------
+DECISIONES TÉCNICAS TOMADAS
+--------------------------------------------------------------------------------
+
+1. Enums como String + CHECK constraints en STAGING (no enums nativos).
+2. Surrogate keys INTEGER con ROW_NUMBER() determinista.
+3. PK = id (UUID) del origen en STAGING.
+4. Transformaciones con SQL puro (text).
+5. TRUNCATE + INSERT para idempotencia.
+6. dim_date generada con generate_series (2020-2030).
+7. 4 KPIs de ventas en V1 (inventory/logistics/procurement en V1.1).
+8. API en puerto 8001 con FastAPI.
+9. Dashboard en puerto 5173 con Vite + React.
+10. Responsive desde el inicio (Tailwind CSS).
+11. TanStack Query con staleTime 5min para cache.
+12. Proxy Vite /api → localhost:8001 (evita CORS en dev).
+13. Migración en 3 pasos para columnas nuevas en tablas con datos.
+
+
+--------------------------------------------------------------------------------
+ARCHIVOS CLAVE CREADOS
+--------------------------------------------------------------------------------
+
+Backend:
+  app/ingestion/extractors/categories.py
+  app/staging/categories.py
+  app/analytical/dim_*.py (6 archivos)
+  app/analytical/fact_sales.py
+  app/analytical/transformers.py
+  app/analytical/runner.py
+  app/analytical/__main__.py
+  app/kpis/revenue_*.py (4 archivos)
+  app/kpis/transformers.py
+  app/kpis/runner.py
+  app/kpis/__main__.py
+  app/api/deps.py
+  app/api/v1/health.py
+  app/api/v1/kpis.py
+  app/api/v1/router.py
+  app/main.py
+  app/schemas/kpis.py
+
+Frontend:
+  dashboard/src/App.tsx
+  dashboard/src/main.tsx
+  dashboard/src/lib/api.ts
+  dashboard/src/lib/format.ts
+  dashboard/src/lib/hooks.ts
+  dashboard/src/components/Layout.tsx
+  dashboard/src/components/PageHeader.tsx
+  dashboard/src/components/KPICard.tsx
+  dashboard/src/components/Grid.tsx
+  dashboard/src/components/Loading.tsx
+  dashboard/src/components/ErrorState.tsx
+  dashboard/src/pages/Overview.tsx
+  dashboard/src/pages/Sales.tsx
+  dashboard/src/pages/Products.tsx
+  dashboard/src/pages/States.tsx
+  dashboard/src/pages/Channels.tsx
+
+
+--------------------------------------------------------------------------------
+MÉTRICAS
+--------------------------------------------------------------------------------
+
+Tiempo total:              ~3 horas
+Migraciones aplicadas:     3 (008, 009, 010)
+Tablas creadas:            15 (8 staging + 7 analytical + 4 kpis - 4 que ya existían)
+Extractores nuevos:        1 (categories)
+Transformadores nuevos:    12 (8 staging + 7 analytical + 4 kpis - 7 que ya existían)
+Endpoints API:             9
+Páginas dashboard:         5
+Componentes React:         6
+Incidentes resueltos:      4
+Commits:                   3+
+Idempotencia:              Verificada end-to-end
+
+
+--------------------------------------------------------------------------------
+PRÓXIMA SESIÓN
+--------------------------------------------------------------------------------
+
+Sesión de cierre:
+
+1. Verificación end-to-end completa:
+   - Correr el simulador con más días (365).
+   - Correr el pipeline completo.
+   - Ver el dashboard con datos actualizados.
+
+2. Capturas de pantalla del dashboard:
+   - Overview desktop
+   - Sales desktop
+   - Mobile responsive
+
+3. Opcional:
+   - Agregar inventory/logistics/procurement (V1.1).
+
+
+--------------------------------------------------------------------------------
+CONCLUSIÓN
+--------------------------------------------------------------------------------
+
+El data platform está funcional end-to-end:
+
+  Simulador → RAW → STAGING → ANALYTICAL → KPIS → API → Dashboard
+
+Cinco capas del método Google implementadas.
+Dashboard responsive con 5 páginas.
+API REST documentada.
+Idempotencia verificada en todas las capas.
+
+El ecosistema Cuidado con Rikochet está completo:
+
+  Repo 1: retail-operations-simulator (produce datos)
+  Repo 2: retail-data-platform (consume y analiza)
+
+Ambos publicados en GitHub.
+
+
+================================================================================
+FIN DEL REPORTE
+================================================================================
