@@ -1,1 +1,1 @@
- 
+"""Capa de API del data platform."""

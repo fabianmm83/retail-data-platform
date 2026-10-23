@@ -1,0 +1,1 @@
+"""Schemas Pydantic del data platform."""
