@@ -39,6 +39,7 @@ class DimProduct(Base):
         Index("ix_dim_product_segment", "segment"),
         Index("ix_dim_product_branded", "branded"),
         Index("ix_dim_product_demand", "demand_profile"),
+        Index("ix_dim_product_category", "category_code"),
         {"schema": "analytical"},
     )
 
@@ -50,6 +51,12 @@ class DimProduct(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     segment: Mapped[str] = mapped_column(String(20), nullable=False)
     age_group: Mapped[str] = mapped_column(String(20), nullable=False)
+    category_code: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="Código de categoría (PLAYERAS, TENIS, ...)",
+    )
+    category_name: Mapped[str] = mapped_column(String(100), nullable=False)
     sport: Mapped[str] = mapped_column(String(20), nullable=False)
     branded: Mapped[bool] = mapped_column(Boolean, nullable=False)
     base_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)

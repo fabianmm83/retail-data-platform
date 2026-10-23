@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ingestion.extractors import (
+    extract_categories,
     extract_customers,
     extract_locations,
     extract_order_items,
@@ -21,6 +22,7 @@ from app.ingestion.extractors import (
 from app.ingestion.loader import RawLoader
 from app.ingestion.watermark_store import WatermarkStore
 from app.meta.pipeline_runs import PipelineRun
+from app.raw.categories import RawCategory
 from app.raw.customers import RawCustomer
 from app.raw.locations import RawLocation
 from app.raw.order_items import RawOrderItem
@@ -33,28 +35,12 @@ from app.raw.states import RawState
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# CONFIGURACIÓN DE ENTIDADES
-# =============================================================================
-
 ENTITIES = {
-    "customers": {
-        "raw_model": RawCustomer,
-        "source_table": "customers",
+    "categories": {
+        "raw_model": RawCategory,
+        "source_table": "categories",
         "mode": "full",
-        "extractor": extract_customers,
-    },
-    "orders": {
-        "raw_model": RawOrder,
-        "source_table": "orders",
-        "mode": "incremental",
-        "extractor": extract_orders,
-    },
-    "order_items": {
-        "raw_model": RawOrderItem,
-        "source_table": "order_items",
-        "mode": "incremental",
-        "extractor": extract_order_items,
+        "extractor": extract_categories,
     },
     "states": {
         "raw_model": RawState,
@@ -80,24 +66,31 @@ ENTITIES = {
         "mode": "full",
         "extractor": extract_product_variants,
     },
+    "customers": {
+        "raw_model": RawCustomer,
+        "source_table": "customers",
+        "mode": "full",
+        "extractor": extract_customers,
+    },
+    "orders": {
+        "raw_model": RawOrder,
+        "source_table": "orders",
+        "mode": "incremental",
+        "extractor": extract_orders,
+    },
+    "order_items": {
+        "raw_model": RawOrderItem,
+        "source_table": "order_items",
+        "mode": "incremental",
+        "extractor": extract_order_items,
+    },
 }
 
 
-# =============================================================================
-# RUN ID
-# =============================================================================
-
-
 def generate_run_id() -> str:
-    """Genera un run_id: ING-YYYYMMDD-HHMMSS-8hex."""
     now = datetime.utcnow()
     suffix = secrets.token_hex(4)
     return f"ING-{now:%Y%m%d}-{now:%H%M%S}-{suffix}"
-
-
-# =============================================================================
-# EJECUCIÓN DE UNA ENTIDAD
-# =============================================================================
 
 
 def _run_entity(
@@ -107,7 +100,6 @@ def _run_entity(
     target_db: Session,
     run_id: str,
 ) -> int:
-    """Ejecuta la ingesta de una entidad. Devuelve filas procesadas."""
     config = ENTITIES[entity_name]
     raw_model = config["raw_model"]
     source_table = config["source_table"]
@@ -150,18 +142,12 @@ def _run_entity(
     return processed
 
 
-# =============================================================================
-# ORQUESTADOR
-# =============================================================================
-
-
 def run_pipeline(
     *,
     source_db: Session,
     target_db: Session,
     entities: list[str],
 ) -> str:
-    """Ejecuta el pipeline completo."""
     if entities == ["all"]:
         entities = list(ENTITIES.keys())
 

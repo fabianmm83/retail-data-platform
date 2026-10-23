@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ENTITIES = [
     "states",
+    "categories",
     "locations",
     "products",
     "product_variants",
@@ -28,7 +29,6 @@ DEFAULT_ENTITIES = [
 
 
 def generate_staging_run_id() -> str:
-    """Genera un run_id para STAGING: STG-YYYYMMDD-HHMMSS-8hex."""
     now = datetime.utcnow()
     suffix = secrets.token_hex(4)
     return f"STG-{now:%Y%m%d}-{now:%H%M%S}-{suffix}"
@@ -39,7 +39,6 @@ def run_staging(
     db: Session,
     entities: list[str] | None = None,
 ) -> str:
-    """Ejecuta la transformación RAW → STAGING."""
     run_id = generate_staging_run_id()
 
     if entities is None:

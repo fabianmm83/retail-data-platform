@@ -1,5 +1,6 @@
 """Extractores de datos desde el simulador."""
 
+from app.ingestion.extractors.categories import extract_categories
 from app.ingestion.extractors.customers import extract_customers
 from app.ingestion.extractors.locations import extract_locations
 from app.ingestion.extractors.order_items import extract_order_items
@@ -9,6 +10,7 @@ from app.ingestion.extractors.products import extract_products
 from app.ingestion.extractors.states import extract_states
 
 __all__ = [
+    "extract_categories",
     "extract_customers",
     "extract_locations",
     "extract_order_items",

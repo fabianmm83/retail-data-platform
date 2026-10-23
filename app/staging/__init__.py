@@ -1,5 +1,6 @@
 """Modelos y transformadores de la capa STAGING."""
 
+from app.staging.categories import StagingCategory
 from app.staging.customers import StagingCustomer
 from app.staging.locations import StagingLocation
 from app.staging.order_items import StagingOrderItem
@@ -10,6 +11,7 @@ from app.staging.runner import run_staging
 from app.staging.states import StagingState
 from app.staging.transformers import (
     transform_all,
+    transform_categories,
     transform_customers,
     transform_locations,
     transform_order_items,
@@ -20,7 +22,7 @@ from app.staging.transformers import (
 )
 
 __all__ = [
-    # Modelos
+    "StagingCategory",
     "StagingCustomer",
     "StagingLocation",
     "StagingOrderItem",
@@ -28,8 +30,8 @@ __all__ = [
     "StagingProductVariant",
     "StagingProduct",
     "StagingState",
-    # Transformadores
     "transform_all",
+    "transform_categories",
     "transform_customers",
     "transform_locations",
     "transform_order_items",
@@ -37,6 +39,5 @@ __all__ = [
     "transform_product_variants",
     "transform_products",
     "transform_states",
-    # Runner
     "run_staging",
 ]

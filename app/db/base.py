@@ -18,6 +18,12 @@ from app.analytical import (  # noqa: E402, F401
     dim_warehouse as _an_dim_warehouse,
     fact_sales as _an_fact_sales,
 )
+from app.kpis import (  # noqa: E402, F401
+    revenue_by_channel as _kpi_rev_chan,
+    revenue_by_product as _kpi_rev_prod,
+    revenue_by_state as _kpi_rev_state,
+    revenue_daily as _kpi_rev_daily,
+)
 from app.meta import pipeline_runs as _meta_pipeline_runs  # noqa: E402, F401
 from app.meta import watermark as _meta_watermark  # noqa: E402, F401
 from app.raw import (  # noqa: E402, F401
@@ -34,6 +40,7 @@ from app.raw import (  # noqa: E402, F401
     states,
 )
 from app.staging import (  # noqa: E402, F401
+    categories as _stg_categories,
     customers as _stg_customers,
     locations as _stg_locations,
     order_items as _stg_order_items,

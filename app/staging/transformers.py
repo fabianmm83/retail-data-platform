@@ -91,7 +91,6 @@ TRANSFORM_CUSTOMERS_SQL = text(
 
 
 def transform_customers(db: Session) -> int:
-    """Transforma raw.customers → staging.customers."""
     logger.info("→ staging.customers")
     db.execute(text("TRUNCATE TABLE staging.customers"))
     result = db.execute(TRANSFORM_CUSTOMERS_SQL)
@@ -153,7 +152,6 @@ TRANSFORM_ORDERS_SQL = text(
 
 
 def transform_orders(db: Session) -> int:
-    """Transforma raw.orders → staging.orders."""
     logger.info("→ staging.orders")
     db.execute(text("TRUNCATE TABLE staging.orders"))
     result = db.execute(TRANSFORM_ORDERS_SQL)
@@ -196,7 +194,6 @@ TRANSFORM_ORDER_ITEMS_SQL = text(
 
 
 def transform_order_items(db: Session) -> int:
-    """Transforma raw.order_items → staging.order_items."""
     logger.info("→ staging.order_items")
     db.execute(text("TRUNCATE TABLE staging.order_items"))
     result = db.execute(TRANSFORM_ORDER_ITEMS_SQL)
@@ -247,10 +244,49 @@ TRANSFORM_STATES_SQL = text(
 
 
 def transform_states(db: Session) -> int:
-    """Transforma raw.states → staging.states."""
     logger.info("→ staging.states")
     db.execute(text("TRUNCATE TABLE staging.states"))
     result = db.execute(TRANSFORM_STATES_SQL)
+    db.flush()
+    rows = result.rowcount or 0
+    logger.info("  %d filas", rows)
+    return rows
+
+
+# =============================================================================
+# CATEGORIES
+# =============================================================================
+
+TRANSFORM_CATEGORIES_SQL = text(
+    """
+    INSERT INTO staging.categories (
+        id,
+        code,
+        name,
+        department,
+        seasonality,
+        status,
+        created_at,
+        updated_at
+    )
+    SELECT
+        r.id,
+        UPPER(TRIM(r.code)),
+        TRIM(r.name),
+        r.department,
+        r.seasonality,
+        r.status,
+        r.created_at,
+        r.updated_at
+    FROM raw.categories r
+    """
+)
+
+
+def transform_categories(db: Session) -> int:
+    logger.info("→ staging.categories")
+    db.execute(text("TRUNCATE TABLE staging.categories"))
+    result = db.execute(TRANSFORM_CATEGORIES_SQL)
     db.flush()
     rows = result.rowcount or 0
     logger.info("  %d filas", rows)
@@ -290,7 +326,6 @@ TRANSFORM_LOCATIONS_SQL = text(
 
 
 def transform_locations(db: Session) -> int:
-    """Transforma raw.locations → staging.locations."""
     logger.info("→ staging.locations")
     db.execute(text("TRUNCATE TABLE staging.locations"))
     result = db.execute(TRANSFORM_LOCATIONS_SQL)
@@ -347,7 +382,6 @@ TRANSFORM_PRODUCTS_SQL = text(
 
 
 def transform_products(db: Session) -> int:
-    """Transforma raw.products → staging.products."""
     logger.info("→ staging.products")
     db.execute(text("TRUNCATE TABLE staging.products"))
     result = db.execute(TRANSFORM_PRODUCTS_SQL)
@@ -390,7 +424,6 @@ TRANSFORM_PRODUCT_VARIANTS_SQL = text(
 
 
 def transform_product_variants(db: Session) -> int:
-    """Transforma raw.product_variants → staging.product_variants."""
     logger.info("→ staging.product_variants")
     db.execute(text("TRUNCATE TABLE staging.product_variants"))
     result = db.execute(TRANSFORM_PRODUCT_VARIANTS_SQL)
@@ -406,6 +439,7 @@ def transform_product_variants(db: Session) -> int:
 
 TRANSFORMERS = {
     "states": transform_states,
+    "categories": transform_categories,
     "locations": transform_locations,
     "products": transform_products,
     "product_variants": transform_product_variants,

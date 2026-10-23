@@ -130,6 +130,8 @@ TRANSFORM_DIM_PRODUCT_SQL = text(
         name,
         segment,
         age_group,
+        category_code,
+        category_name,
         sport,
         branded,
         base_price,
@@ -145,6 +147,8 @@ TRANSFORM_DIM_PRODUCT_SQL = text(
         p.name,
         p.segment,
         p.age_group,
+        c.code AS category_code,
+        c.name AS category_name,
         p.sport,
         p.branded,
         p.base_price,
@@ -153,12 +157,13 @@ TRANSFORM_DIM_PRODUCT_SQL = text(
         p.lifecycle_stage,
         p.launch_date
     FROM staging.products p
+    INNER JOIN staging.categories c ON c.id = p.category_id
     """
 )
 
 
 def transform_dim_product(db: Session) -> int:
-    """Carga los 32 productos."""
+    """Carga los 32 productos con su categoría. Requiere staging.categories."""
     logger.info("→ analytical.dim_product")
     db.execute(text("TRUNCATE TABLE analytical.dim_product CASCADE"))
     result = db.execute(TRANSFORM_DIM_PRODUCT_SQL)
@@ -166,7 +171,6 @@ def transform_dim_product(db: Session) -> int:
     rows = result.rowcount or 0
     logger.info("  %d filas", rows)
     return rows
-
 
 # =============================================================================
 # DIM_VARIANT
