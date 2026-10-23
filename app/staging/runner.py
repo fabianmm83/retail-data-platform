@@ -1,16 +1,4 @@
-"""Runner de la capa STAGING.
-
-Ejecuta la transformación RAW → STAGING y registra el resultado
-en meta.pipeline_runs (reusa la tabla de control del pipeline).
-
-Uso:
-
-    from app.db.session import TargetSessionLocal
-    from app.staging.runner import run_staging
-
-    with TargetSessionLocal() as db:
-        run_id = run_staging(db, entities=['customers', 'orders', 'order_items'])
-"""
+"""Runner de la capa STAGING."""
 
 from __future__ import annotations
 
@@ -28,9 +16,15 @@ from app.staging.transformers import transform_all
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# RUN ID
-# =============================================================================
+DEFAULT_ENTITIES = [
+    "states",
+    "locations",
+    "products",
+    "product_variants",
+    "customers",
+    "orders",
+    "order_items",
+]
 
 
 def generate_staging_run_id() -> str:
@@ -40,31 +34,17 @@ def generate_staging_run_id() -> str:
     return f"STG-{now:%Y%m%d}-{now:%H%M%S}-{suffix}"
 
 
-# =============================================================================
-# ORQUESTADOR
-# =============================================================================
-
-
 def run_staging(
     *,
     db: Session,
     entities: list[str] | None = None,
 ) -> str:
-    """Ejecuta la transformación RAW → STAGING.
-
-    Args:
-        db: sesión al data platform.
-        entities: lista de entidades a transformar (None = todas).
-
-    Returns:
-        El run_id generado.
-    """
+    """Ejecuta la transformación RAW → STAGING."""
     run_id = generate_staging_run_id()
 
     if entities is None:
-        entities = ["customers", "orders", "order_items"]
+        entities = DEFAULT_ENTITIES
 
-    # Registrar el run
     run = PipelineRun(
         run_id=run_id,
         status="RUNNING",
@@ -82,7 +62,6 @@ def run_staging(
         results = transform_all(db, entities=entities)
         total_rows = sum(results.values())
 
-        # Marcar run como SUCCESS
         run.status = "SUCCESS"
         run.finished_at = datetime.utcnow()
         run.rows_ingested = total_rows
@@ -94,7 +73,6 @@ def run_staging(
     except Exception as exc:
         db.rollback()
 
-        # Marcar run como FAILED
         run_obj = db.scalar(
             select(PipelineRun).where(PipelineRun.run_id == run_id)
         )

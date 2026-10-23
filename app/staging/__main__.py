@@ -1,18 +1,11 @@
-"""CLI del runner de STAGING.
-
-Uso:
-
-    python -m app.staging --entities all
-    python -m app.staging --entities customers
-    python -m app.staging --entities customers,orders
-"""
+"""CLI del runner de STAGING."""
 
 import argparse
 import logging
 import sys
 
 from app.db.session import TargetSessionLocal
-from app.staging.runner import run_staging
+from app.staging.runner import DEFAULT_ENTITIES, run_staging
 
 
 def _parse_args() -> argparse.Namespace:
@@ -54,7 +47,7 @@ def main() -> None:
     print("=" * 70)
     print("Retail Data Platform — STAGING")
     print("=" * 70)
-    print(f"Entidades: {entities or ['customers', 'orders', 'order_items']}")
+    print(f"Entidades: {entities or DEFAULT_ENTITIES}")
     print("=" * 70)
 
     with TargetSessionLocal() as db:

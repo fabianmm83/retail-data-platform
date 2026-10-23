@@ -1,16 +1,4 @@
-"""Orquestador del pipeline.
-
-Coordina las fases:
-
-1. Genera un run_id único.
-2. Registra el run en meta.pipeline_runs.
-3. Por cada entidad solicitada:
-   a. Marca el watermark como RUNNING.
-   b. Extrae filas del origen.
-   c. Carga las filas a RAW con UPSERT.
-   d. Actualiza el watermark como SUCCESS.
-4. Marca el run como SUCCESS o FAILED.
-"""
+"""Orquestador del pipeline."""
 
 from __future__ import annotations
 
@@ -23,15 +11,23 @@ from sqlalchemy.orm import Session
 
 from app.ingestion.extractors import (
     extract_customers,
+    extract_locations,
     extract_order_items,
     extract_orders,
+    extract_product_variants,
+    extract_products,
+    extract_states,
 )
 from app.ingestion.loader import RawLoader
 from app.ingestion.watermark_store import WatermarkStore
 from app.meta.pipeline_runs import PipelineRun
 from app.raw.customers import RawCustomer
+from app.raw.locations import RawLocation
 from app.raw.order_items import RawOrderItem
 from app.raw.orders import RawOrder
+from app.raw.product_variants import RawProductVariant
+from app.raw.products import RawProduct
+from app.raw.states import RawState
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +56,30 @@ ENTITIES = {
         "mode": "incremental",
         "extractor": extract_order_items,
     },
+    "states": {
+        "raw_model": RawState,
+        "source_table": "states",
+        "mode": "full",
+        "extractor": extract_states,
+    },
+    "locations": {
+        "raw_model": RawLocation,
+        "source_table": "locations",
+        "mode": "full",
+        "extractor": extract_locations,
+    },
+    "products": {
+        "raw_model": RawProduct,
+        "source_table": "products",
+        "mode": "full",
+        "extractor": extract_products,
+    },
+    "product_variants": {
+        "raw_model": RawProductVariant,
+        "source_table": "product_variants",
+        "mode": "full",
+        "extractor": extract_product_variants,
+    },
 }
 
 
@@ -71,7 +91,7 @@ ENTITIES = {
 def generate_run_id() -> str:
     """Genera un run_id: ING-YYYYMMDD-HHMMSS-8hex."""
     now = datetime.utcnow()
-    suffix = secrets.token_hex(4)  # 8 hex chars
+    suffix = secrets.token_hex(4)
     return f"ING-{now:%Y%m%d}-{now:%H%M%S}-{suffix}"
 
 
@@ -99,10 +119,8 @@ def _run_entity(
 
     logger.info("→ %s (mode=%s)", entity_name, mode)
 
-    # 1. Marcar watermark RUNNING
     watermark_store.mark_running(entity_name)
 
-    # 2. Extraer del origen
     if mode == "full":
         rows = extractor(source_db=source_db)
         last_date = None
@@ -115,14 +133,12 @@ def _run_entity(
 
     logger.info("  extraídas %d filas", len(rows))
 
-    # 3. Cargar a RAW
     processed = loader.upsert_many(
         model=raw_model,
         rows=rows,
         source_table=source_table,
     )
 
-    # 4. Actualizar watermark
     watermark_store.update(
         entity_name=entity_name,
         last_date=last_date,
@@ -145,21 +161,10 @@ def run_pipeline(
     target_db: Session,
     entities: list[str],
 ) -> str:
-    """Ejecuta el pipeline completo.
-
-    Args:
-        source_db: sesión al simulador (5434).
-        target_db: sesión al data platform (5435).
-        entities: lista de entidades a procesar (o ['all']).
-
-    Returns:
-        El run_id generado.
-    """
-    # Resolver "all"
+    """Ejecuta el pipeline completo."""
     if entities == ["all"]:
         entities = list(ENTITIES.keys())
 
-    # Validar
     for entity in entities:
         if entity not in ENTITIES:
             raise ValueError(
@@ -169,7 +174,6 @@ def run_pipeline(
 
     run_id = generate_run_id()
 
-    # Registrar el run
     run = PipelineRun(
         run_id=run_id,
         status="RUNNING",
@@ -193,7 +197,6 @@ def run_pipeline(
             )
             total_rows += processed
 
-        # Marcar run como SUCCESS
         run.status = "SUCCESS"
         run.finished_at = datetime.utcnow()
         run.rows_ingested = total_rows
@@ -205,7 +208,6 @@ def run_pipeline(
     except Exception as exc:
         target_db.rollback()
 
-        # Marcar run como FAILED
         run_obj = target_db.scalar(
             select(PipelineRun).where(PipelineRun.run_id == run_id)
         )
